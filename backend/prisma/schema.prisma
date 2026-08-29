@@ -1,0 +1,415 @@
+// CivicConnect Prisma Schema
+// Database: PostgreSQL 16 + PostGIS extension
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------
+// ENUMS
+// ----------------------------------------------------
+
+enum Role {
+  CITIZEN
+  HOSPITAL
+  BLOOD_BANK
+  PHARMACY
+  AMBULANCE
+  NGO
+  AUTHORITY
+  ADMIN
+}
+
+enum OrgType {
+  HOSPITAL
+  BLOOD_BANK
+  PHARMACY
+  AMBULANCE_PROVIDER
+  NGO
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum BloodType {
+  A_POSITIVE
+  A_NEGATIVE
+  B_POSITIVE
+  B_NEGATIVE
+  AB_POSITIVE
+  AB_NEGATIVE
+  O_POSITIVE
+  O_NEGATIVE
+}
+
+enum AmbulanceStatus {
+  AVAILABLE
+  BUSY
+  OFFLINE
+}
+
+enum AmbulanceRequestStatus {
+  REQUESTED
+  ACCEPTED
+  EN_ROUTE
+  COMPLETED
+  CANCELLED
+}
+
+enum ComplaintStatus {
+  PENDING
+  UNDER_REVIEW
+  RESOLVED
+  REJECTED
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// ----------------------------------------------------
+// USER & AUTH
+// ----------------------------------------------------
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  phone        String?
+  role         Role     @default(CITIZEN)
+  isActive     Boolean  @default(true) @map("is_active")
+  isVerified   Boolean  @default(false) @map("is_verified")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  organizations       Organization[]
+  verifiedOrgs        Organization[]     @relation("AdminVerifiedOrgs")
+  refreshTokens       RefreshToken[]
+  complaintsFiled     Complaint[]        @relation("CitizenComplaints")
+  complaintsResolved  Complaint[]        @relation("AdminResolvedComplaints")
+  ambulanceRequests   AmbulanceRequest[] @relation("CitizenAmbulanceRequests")
+  schemesCreated      GovernmentScheme[] @relation("AuthorityCreatedSchemes")
+  alertsCreated       EmergencyAlert[]   @relation("AuthorityCreatedAlerts")
+  aiChatHistory       AIChatHistory[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  tokenHash String   @map("token_hash")
+  userId    String   @map("user_id") @db.Uuid
+  expiresAt DateTime @map("expires_at")
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("refresh_tokens")
+}
+
+// ----------------------------------------------------
+// ORGANIZATIONS & HEALTH FACILITIES
+// ----------------------------------------------------
+
+model Organization {
+  id                 String             @id @default(uuid()) @db.Uuid
+  userId             String             @map("user_id") @db.Uuid
+  name               String
+  type               OrgType
+  description        String?            @db.Text
+  address            String
+  city               String
+  state              String
+  pincode            String
+  latitude           Float
+  longitude          Float
+  phone              String
+  email              String
+  website            String?
+  verificationStatus VerificationStatus @default(PENDING) @map("verification_status")
+  licenseNumber      String?            @map("license_number")
+  rejectionReason    String?            @map("rejection_reason") @db.Text
+  verifiedAt         DateTime?          @map("verified_at")
+  verifiedById       String?            @map("verified_by_id") @db.Uuid
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  user       User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verifiedBy User? @relation("AdminVerifiedOrgs", fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  // Facility-specific profiles (1-to-1 or 1-to-many)
+  hospitalDetail     HospitalDetail?
+  bloodBankInventory BloodBankInventory[]
+  pharmacyMedicines  PharmacyMedicine[]
+  ambulanceDetails   AmbulanceDetail[]
+  complaintsReceived Complaint[]          @relation("OrgComplaints")
+
+  @@index([type])
+  @@index([city])
+  @@index([verificationStatus])
+  @@index([latitude, longitude])
+  @@map("organizations")
+}
+
+// ----------------------------------------------------
+// HOSPITAL CAPACITY & SPECIALTIES
+// ----------------------------------------------------
+
+model HospitalDetail {
+  id                    String    @id @default(uuid()) @db.Uuid
+  orgId                 String    @unique @map("org_id") @db.Uuid
+  totalBeds             Int       @default(0) @map("total_beds")
+  availableGeneralBeds  Int       @default(0) @map("available_general_beds")
+  availableIcuBeds      Int       @default(0) @map("available_icu_beds")
+  emergencyAvailable    Boolean   @default(true) @map("emergency_available")
+  hasOxygenSupport      Boolean   @default(true) @map("has_oxygen_support")
+  hasVentilators        Boolean   @default(true) @map("has_ventilators")
+  departments           String[]  @default([])
+  services              String[]  @default([])
+  operatingHours        String    @default("24/7") @map("operating_hours")
+  availabilityUpdatedAt DateTime  @default(now()) @map("availability_updated_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([availableGeneralBeds])
+  @@index([availableIcuBeds])
+  @@index([emergencyAvailable])
+  @@map("hospital_details")
+}
+
+// ----------------------------------------------------
+// BLOOD BANK INVENTORY
+// ----------------------------------------------------
+
+model BloodBankInventory {
+  id             String    @id @default(uuid()) @db.Uuid
+  orgId          String    @map("org_id") @db.Uuid
+  bloodType      BloodType @map("blood_type")
+  unitsAvailable Int       @default(0) @map("units_available")
+  lastUpdated    DateTime  @default(now()) @map("last_updated")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, bloodType])
+  @@index([bloodType, unitsAvailable])
+  @@map("blood_bank_inventory")
+}
+
+// ----------------------------------------------------
+// PHARMACY & MEDICINES
+// ----------------------------------------------------
+
+model PharmacyMedicine {
+  id           String   @id @default(uuid()) @db.Uuid
+  orgId        String   @map("org_id") @db.Uuid
+  medicineName String   @map("medicine_name")
+  genericName  String?  @map("generic_name")
+  category     String?
+  price        Float    @default(0.0)
+  inStock      Boolean  @default(true) @map("in_stock")
+  quantity     Int      @default(0)
+  lastUpdated  DateTime @default(now()) @map("last_updated")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([medicineName])
+  @@index([genericName])
+  @@index([inStock])
+  @@map("pharmacy_medicines")
+}
+
+// ----------------------------------------------------
+// AMBULANCES & EMERGENCY DISPATCH
+// ----------------------------------------------------
+
+model AmbulanceDetail {
+  id              String          @id @default(uuid()) @db.Uuid
+  orgId           String          @map("org_id") @db.Uuid
+  vehicleNumber   String          @map("vehicle_number")
+  vehicleType     String          @default("Basic Life Support") @map("vehicle_type")
+  status          AmbulanceStatus @default(AVAILABLE)
+  contactNumber   String          @map("contact_number")
+  driverName      String?         @map("driver_name")
+  statusUpdatedAt DateTime        @default(now()) @map("status_updated_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  organization Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  requests     AmbulanceRequest[]
+
+  @@index([status])
+  @@map("ambulance_details")
+}
+
+model AmbulanceRequest {
+  id                   String                 @id @default(uuid()) @db.Uuid
+  citizenId            String                 @map("citizen_id") @db.Uuid
+  ambulanceId          String?                @map("ambulance_id") @db.Uuid
+  pickupLatitude       Float                  @map("pickup_latitude")
+  pickupLongitude      Float                  @map("pickup_longitude")
+  pickupAddress        String                 @map("pickup_address") @db.Text
+  emergencyDescription String                 @map("emergency_description") @db.Text
+  status               AmbulanceRequestStatus @default(REQUESTED)
+  createdAt            DateTime               @default(now()) @map("created_at")
+  respondedAt          DateTime?              @map("responded_at")
+  completedAt          DateTime?              @map("completed_at")
+
+  citizen   User             @relation("CitizenAmbulanceRequests", fields: [citizenId], references: [id], onDelete: Cascade)
+  ambulance AmbulanceDetail? @relation(fields: [ambulanceId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([citizenId])
+  @@map("ambulance_requests")
+}
+
+// ----------------------------------------------------
+// GOVERNMENT SCHEMES & PUBLIC HEALTH POLICIES
+// ----------------------------------------------------
+
+model GovernmentScheme {
+  id                  String   @id @default(uuid()) @db.Uuid
+  createdById         String   @map("created_by_id") @db.Uuid
+  title               String
+  description         String   @db.Text
+  eligibilityCriteria String   @map("eligibility_criteria") @db.Text
+  benefits            String   @db.Text
+  applicationUrl      String?  @map("application_url")
+  category            String   @default("General")
+  documentsRequired   String[] @default([]) @map("documents_required")
+  isActive            Boolean  @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  createdBy User @relation("AuthorityCreatedSchemes", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([category])
+  @@index([isActive])
+  @@map("government_schemes")
+}
+
+// ----------------------------------------------------
+// CITIZEN GRIEVANCES / COMPLAINTS
+// ----------------------------------------------------
+
+model Complaint {
+  id               String          @id @default(uuid()) @db.Uuid
+  citizenId        String          @map("citizen_id") @db.Uuid
+  organizationId   String?         @map("organization_id") @db.Uuid
+  category         String
+  description      String          @db.Text
+  attachmentUrl    String?         @map("attachment_url")
+  status           ComplaintStatus @default(PENDING)
+  resolutionNotes  String?         @map("resolution_notes") @db.Text
+  resolvedById     String?         @map("resolved_by_id") @db.Uuid
+  createdAt        DateTime        @default(now()) @map("created_at")
+  resolvedAt       DateTime?       @map("resolved_at")
+
+  citizen      User          @relation("CitizenComplaints", fields: [citizenId], references: [id], onDelete: Cascade)
+  organization Organization? @relation("OrgComplaints", fields: [organizationId], references: [id], onDelete: SetNull)
+  resolvedBy   User?         @relation("AdminResolvedComplaints", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([citizenId])
+  @@index([organizationId])
+  @@map("complaints")
+}
+
+// ----------------------------------------------------
+// EMERGENCY ALERTS & PUBLIC HEALTH BROADCASTS
+// ----------------------------------------------------
+
+model EmergencyAlert {
+  id           String        @id @default(uuid()) @db.Uuid
+  createdById  String        @map("created_by_id") @db.Uuid
+  title        String
+  description  String        @db.Text
+  severity     AlertSeverity @default(HIGH)
+  affectedArea String        @map("affected_area")
+  isActive     Boolean       @default(true) @map("is_active")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  expiresAt    DateTime?     @map("expires_at")
+
+  createdBy User @relation("AuthorityCreatedAlerts", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([severity])
+  @@index([isActive])
+  @@map("emergency_alerts")
+}
+
+// ----------------------------------------------------
+// AI CHAT HISTORY & AUDIT TRAILS
+// ----------------------------------------------------
+
+model AIChatHistory {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  userMessage String   @map("user_message") @db.Text
+  aiResponse  String   @map("ai_response") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("ai_chat_history")
+}
+
+model Notification {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  title     String
+  message   String   @db.Text
+  type      String   @default("INFO")
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  oldValues  Json?    @map("old_values")
+  newValues  Json?    @map("new_values")
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
