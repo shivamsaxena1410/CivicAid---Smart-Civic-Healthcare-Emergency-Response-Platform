@@ -2,12 +2,17 @@
 // Database: PostgreSQL 16 + PostGIS extension
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  // PostGIS is required for radius search (ST_DWithin) and distance ordering
+  // (ST_Distance). Declared here so `prisma migrate` creates the extension
+  // itself instead of relying on someone remembering to run CREATE EXTENSION.
+  extensions = [postgis]
 }
 
 // ----------------------------------------------------
@@ -38,6 +43,22 @@ enum VerificationStatus {
   APPROVED
   REJECTED
   SUSPENDED
+}
+
+/// Provenance of a record's data. Lets the API and UI state honestly whether a
+/// facility's availability figures are invented for the demo or came from a real
+/// source, and gives a future public-data importer a field to set.
+enum DataSource {
+  /// Invented for the academic demonstration. Not real information.
+  SIMULATED
+  /// Imported from a public directory (e.g. OpenStreetMap, a government facility
+  /// registry). Location and identity are real; availability is not implied.
+  PUBLIC_DIRECTORY
+  /// Entered by the verified facility itself through its provider portal.
+  SELF_REPORTED
+  /// Received from an authenticated live integration with the facility's own
+  /// system. No such integration exists yet.
+  VERIFIED_INTEGRATION
 }
 
 enum BloodType {
@@ -114,17 +135,22 @@ model User {
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid()) @db.Uuid
-  tokenHash String   @map("token_hash")
+  id String @id @default(uuid()) @db.Uuid
+  // SHA-256 hex digest of the issued refresh token. Unique because rotation
+  // looks the presented token up directly (findUnique) to check revocation and
+  // expiry — the inherited code stored a bcrypt hash, which is unindexable and
+  // truncates JWTs at 72 bytes.
+  tokenHash String   @unique @map("token_hash")
   userId    String   @map("user_id") @db.Uuid
   expiresAt DateTime @map("expires_at")
+  // Rotated/logged-out tokens are marked revoked rather than deleted, so a
+  // token replayed afterwards is recognised as reuse instead of as unknown.
   revoked   Boolean  @default(false)
   createdAt DateTime @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@index([tokenHash])
   @@map("refresh_tokens")
 }
 
@@ -144,6 +170,14 @@ model Organization {
   pincode            String
   latitude           Float
   longitude          Float
+  // PostGIS geography point, maintained by the database as a STORED GENERATED
+  // column derived from (longitude, latitude) — see the initial migration.
+  // Generated rather than trigger- or application-maintained because PostGIS
+  // constructors are IMMUTABLE, which makes the column provably consistent with
+  // the two Float columns above and removes any chance of app-side drift.
+  // Prisma has no first-class type for geography, so it is Unsupported() and is
+  // queried through $queryRaw (ST_DWithin / ST_Distance) in the search services.
+  location           Unsupported("geography(Point, 4326)")?
   phone              String
   email              String
   website            String?
@@ -152,6 +186,14 @@ model Organization {
   rejectionReason    String?            @map("rejection_reason") @db.Text
   verifiedAt         DateTime?          @map("verified_at")
   verifiedById       String?            @map("verified_by_id") @db.Uuid
+  // ---- Data provenance -------------------------------------------------
+  // This is an academic project seeded with invented availability figures.
+  // Marking provenance in the database (rather than only in the README) keeps
+  // simulated records mechanically distinguishable from real ones, lets the UI
+  // label them honestly, and gives a future importer of genuine public data
+  // (OSM / NHA facility registries) a field to write.
+  isSimulated        Boolean            @default(true) @map("is_simulated")
+  dataSource         DataSource         @default(SIMULATED) @map("data_source")
   createdAt          DateTime           @default(now()) @map("created_at")
   updatedAt          DateTime           @updatedAt @map("updated_at")
 
@@ -168,7 +210,12 @@ model Organization {
   @@index([type])
   @@index([city])
   @@index([verificationStatus])
-  @@index([latitude, longitude])
+  @@index([isSimulated])
+  // GiST index on the geography column. The inherited @@index([latitude,
+  // longitude]) was a composite btree, which cannot answer a radius query: a
+  // btree can range-scan latitude but must then filter every row for longitude,
+  // and it has no notion of distance at all.
+  @@index([location], type: Gist)
   @@map("organizations")
 }
 
