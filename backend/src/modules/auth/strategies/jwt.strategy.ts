@@ -19,7 +19,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_ACCESS_SECRET') || 'civicconnect_dev_access_jwt_secret_key_2026',
+      // getOrThrow, not `get() || '<committed default>'`. A deployment missing
+      // its secret must refuse to start, not accept tokens signed with a key
+      // that is published in this repository.
+      secretOrKey: configService.getOrThrow<string>('JWT_ACCESS_SECRET'),
     });
   }
 

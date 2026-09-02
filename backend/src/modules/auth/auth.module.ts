@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { AuthService } from './auth.service';
+import { AuthService, parseDurationToSeconds } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
@@ -12,9 +12,14 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_ACCESS_SECRET') || 'civicconnect_dev_access_jwt_secret_key_2026',
+        // No `||` fallback: a missing secret is a startup failure enforced by
+        // validateEnv(), never a silent downgrade to a committed default.
+        secret: configService.getOrThrow<string>('JWT_ACCESS_SECRET'),
         signOptions: {
-          expiresIn: '15m',
+          // Seconds (a number) rather than the config string, so the value
+          // satisfies @nestjs/jwt's `number | ms.StringValue` typing without a
+          // cast. This is only a default; AuthService sets expiresIn per sign.
+          expiresIn: parseDurationToSeconds(configService.get<string>('JWT_ACCESS_EXPIRATION') ?? '15m'),
         },
       }),
       inject: [ConfigService],
