@@ -2,17 +2,26 @@
 // Database: PostgreSQL 16 + PostGIS extension
 
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["postgresqlExtensions"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider   = "postgresql"
-  url        = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
   // PostGIS is required for radius search (ST_DWithin) and distance ordering
-  // (ST_Distance). Declared here so `prisma migrate` creates the extension
-  // itself instead of relying on someone remembering to run CREATE EXTENSION.
-  extensions = [postgis]
+  // (ST_Distance). The extension is created by the initial migration's
+  // `CREATE EXTENSION IF NOT EXISTS "postgis"` rather than declared here.
+  //
+  // We deliberately do NOT use the `postgresqlExtensions` preview feature. It
+  // makes Prisma diff the database's extension list against this block, and the
+  // postgis/postgis Docker image ships four extensions (postgis,
+  // postgis_topology, fuzzystrmatch, postgis_tiger_geocoder). Declaring only
+  // postgis made every `migrate` run report drift and demand a schema reset —
+  // and that reset is genuinely destructive here, because dropping the postgis
+  // extension cascades into the topology/tiger schemas the image created,
+  // leaving them orphaned so the extensions cannot be recreated afterwards.
+  // Creating the extension in migration SQL gives the same "nobody has to
+  // remember to run CREATE EXTENSION" guarantee without the diffing.
 }
 
 // ----------------------------------------------------
@@ -177,7 +186,15 @@ model Organization {
   // the two Float columns above and removes any chance of app-side drift.
   // Prisma has no first-class type for geography, so it is Unsupported() and is
   // queried through $queryRaw (ST_DWithin / ST_Distance) in the search services.
-  location           Unsupported("geography(Point, 4326)")?
+  //
+  // The @default(dbgenerated(...)) is required even though this is not really a
+  // DEFAULT. Prisma cannot model generated columns, so it introspects the
+  // generation expression as though it were a column default; without this
+  // annotation `prisma migrate diff` reports drift and the next `migrate dev`
+  // would emit `ALTER COLUMN "location" DROP DEFAULT`, silently destroying the
+  // generated column. The expression must stay byte-identical to what Postgres
+  // reports in information_schema.columns.generation_expression.
+  location           Unsupported("geography(Point, 4326)")? @default(dbgenerated("(st_setsrid(st_makepoint(longitude, latitude), 4326))::geography"))
   phone              String
   email              String
   website            String?
