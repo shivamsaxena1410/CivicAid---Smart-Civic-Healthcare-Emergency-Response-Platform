@@ -44,3 +44,6 @@ postgres_data/
 # Uploads
 uploads/
 temp/
+
+# Graphify generated analysis output (regenerable from source; ~2 MB)
+graphify-out/
