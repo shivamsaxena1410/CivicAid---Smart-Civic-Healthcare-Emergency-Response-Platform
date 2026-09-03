@@ -29,6 +29,16 @@ import { AdminModule } from './modules/admin/admin.module';
       // falling back to a committed default. See config/env.validation.ts.
       validate: validateEnv,
     }),
+    // One global bucket. Sensitive handlers tighten it per-route with
+    // `@Throttle({ default: { ... } })` rather than declaring extra named
+    // throttlers here, because every throttler listed in `forRoot` applies to
+    // every route — a second strict entry would cap facility search too.
+    //
+    // Storage is in-memory: counters are per-process and reset on restart. That
+    // is honest for a single-container deployment and is what this project runs.
+    // A multi-instance deployment needs a shared store; Redis is already in the
+    // compose file, but the throttler's Redis storage adapter is a separate
+    // package that is deliberately not installed here.
     ThrottlerModule.forRoot([
       {
         ttl: 60000,

@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { VerifyOrganizationDto, ToggleUserStatusDto } from './dto/admin.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
-import { VerificationStatus, OrgType } from '@prisma/client';
+import { Prisma, VerificationStatus, OrgType } from '@prisma/client';
 
 @Injectable()
 export class AdminService {
@@ -127,7 +127,7 @@ export class AdminService {
     const { page = 1, limit = 20, search } = query;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: Prisma.UserWhereInput = {};
     if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },

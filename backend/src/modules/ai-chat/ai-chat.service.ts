@@ -56,10 +56,15 @@ User question: "${userMessage}"`,
           },
         );
 
-        const data: any = await response.json();
+        // Only the one field we read is typed; the rest of the Gemini payload
+        // is not this project's contract to model.
+        const data = (await response.json()) as {
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        };
         aiResponse = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      } catch (err: any) {
-        this.logger.warn(`External Gemini API call failed: ${err?.message || 'Network error'}. Using intelligent offline health engine.`);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'Network error';
+        this.logger.warn(`External Gemini API call failed: ${reason}. Using intelligent offline health engine.`);
       }
     }
 
