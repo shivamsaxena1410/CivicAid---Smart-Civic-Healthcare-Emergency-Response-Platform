@@ -180,7 +180,7 @@ export default function SchemesPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.6rem', flexWrap: 'wrap' }}>
                   <strong style={{ fontSize: '1rem' }}>{scheme.title}</strong>
                   <div style={{ display: 'flex', gap: '0.35rem' }}>
-                    <span className="badge badge-purple badge-cyan">{scheme.category}</span>
+                    <span className="badge badge-cyan">{scheme.category}</span>
                     {!scheme.isActive ? <span className="badge badge-rose">inactive</span> : null}
                   </div>
                 </div>
