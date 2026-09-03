@@ -10,7 +10,7 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { HospitalService } from './hospital.service';
 import { UpdateHospitalCapacityDto } from './dto/update-capacity.dto';
-import { GeoSearchDto } from '../../common/dto/pagination.dto';
+import { HospitalSearchDto } from './dto/hospital-search.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -26,27 +26,8 @@ export class HospitalController {
   @Public()
   @Get()
   @ApiOperation({ summary: 'Search hospitals with live ICU, General bed counts and distance' })
-  @ApiQuery({ name: 'icuOnly', type: Boolean, required: false })
-  @ApiQuery({ name: 'emergencyOnly', type: Boolean, required: false })
-  @ApiQuery({ name: 'oxygenOnly', type: Boolean, required: false })
-  @ApiQuery({ name: 'ventilatorOnly', type: Boolean, required: false })
-  @ApiQuery({ name: 'department', type: String, required: false })
-  async findAll(
-    @Query() query: GeoSearchDto,
-    @Query('icuOnly') icuOnly?: boolean,
-    @Query('emergencyOnly') emergencyOnly?: boolean,
-    @Query('oxygenOnly') oxygenOnly?: boolean,
-    @Query('ventilatorOnly') ventilatorOnly?: boolean,
-    @Query('department') department?: string,
-  ) {
-    return this.hospitalService.findAll({
-      ...query,
-      icuOnly: String(icuOnly) === 'true',
-      emergencyOnly: String(emergencyOnly) === 'true',
-      oxygenOnly: String(oxygenOnly) === 'true',
-      ventilatorOnly: String(ventilatorOnly) === 'true',
-      department,
-    });
+  async findAll(@Query() query: HospitalSearchDto) {
+    return this.hospitalService.findAll(query);
   }
 
   @Public()
@@ -66,6 +47,6 @@ export class HospitalController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: UpdateHospitalCapacityDto,
   ) {
-    return this.hospitalService.updateCapacity(id, user.id, user.role, dto);
+    return this.hospitalService.updateCapacity(id, user, dto);
   }
 }

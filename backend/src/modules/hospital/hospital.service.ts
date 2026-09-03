@@ -1,22 +1,17 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateHospitalCapacityDto } from './dto/update-capacity.dto';
-import { GeoSearchDto } from '../../common/dto/pagination.dto';
-import { OrgType, VerificationStatus } from '@prisma/client';
+import { HospitalSearchDto } from './dto/hospital-search.dto';
+import { OrgType, Prisma, VerificationStatus } from '@prisma/client';
+import { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { assertOrgAccess } from '../../common/authorization/assert-org-access';
+import { searchOrganizationsByProximity, toGeoQuery } from '../../common/geo/geo-search';
 
 @Injectable()
 export class HospitalService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(
-    query: GeoSearchDto & {
-      icuOnly?: boolean;
-      emergencyOnly?: boolean;
-      oxygenOnly?: boolean;
-      ventilatorOnly?: boolean;
-      department?: string;
-    },
-  ) {
+  async findAll(query: HospitalSearchDto) {
     const {
       page = 1,
       limit = 20,
@@ -24,7 +19,7 @@ export class HospitalService {
       city,
       lat,
       lng,
-      radiusKm = 20,
+      radiusKm,
       icuOnly,
       emergencyOnly,
       oxygenOnly,
@@ -32,87 +27,35 @@ export class HospitalService {
       department,
     } = query;
 
-    const skip = (page - 1) * limit;
+    const hospitalDetailWhere: Prisma.HospitalDetailWhereInput = {
+      ...(icuOnly && { availableIcuBeds: { gt: 0 } }),
+      ...(emergencyOnly && { emergencyAvailable: true }),
+      ...(oxygenOnly && { hasOxygenSupport: true }),
+      ...(ventilatorOnly && { hasVentilators: true }),
+      ...(department && { departments: { has: department } }),
+    };
 
-    const where: any = {
+    const where: Prisma.OrganizationWhereInput = {
       type: OrgType.HOSPITAL,
       verificationStatus: VerificationStatus.APPROVED,
-      hospitalDetail: {
-        isNot: null,
-      },
-    };
-
-    if (city) {
-      where.city = { contains: city, mode: 'insensitive' };
-    }
-
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { address: { contains: search, mode: 'insensitive' } },
-      ];
-    }
-
-    const hospitalDetailWhere: any = {};
-    if (icuOnly) {
-      hospitalDetailWhere.availableIcuBeds = { gt: 0 };
-    }
-    if (emergencyOnly) {
-      hospitalDetailWhere.emergencyAvailable = true;
-    }
-    if (oxygenOnly) {
-      hospitalDetailWhere.hasOxygenSupport = true;
-    }
-    if (ventilatorOnly) {
-      hospitalDetailWhere.hasVentilators = true;
-    }
-    if (department) {
-      hospitalDetailWhere.departments = { has: department };
-    }
-
-    if (Object.keys(hospitalDetailWhere).length > 0) {
-      where.hospitalDetail = hospitalDetailWhere;
-    }
-
-    const [total, hospitals] = await Promise.all([
-      this.prisma.organization.count({ where }),
-      this.prisma.organization.findMany({
-        where,
-        include: {
-          hospitalDetail: true,
-        },
-        skip,
-        take: limit,
+      hospitalDetail:
+        Object.keys(hospitalDetailWhere).length > 0 ? { is: hospitalDetailWhere } : { isNot: null },
+      ...(city && { city: { contains: city, mode: 'insensitive' as const } }),
+      ...(search && {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' as const } },
+          { address: { contains: search, mode: 'insensitive' as const } },
+        ],
       }),
-    ]);
-
-    let processed = hospitals.map((h) => {
-      let distanceKm: number | null = null;
-      if (lat && lng) {
-        distanceKm = this.calculateHaversineDistance(lat, lng, h.latitude, h.longitude);
-      }
-      return {
-        ...h,
-        distanceKm: distanceKm ? Number(distanceKm.toFixed(2)) : null,
-      };
-    });
-
-    if (lat && lng) {
-      if (radiusKm) {
-        processed = processed.filter((h) => h.distanceKm === null || h.distanceKm <= radiusKm);
-      }
-      processed.sort((a, b) => (a.distanceKm ?? 9999) - (b.distanceKm ?? 9999));
-    }
-
-    return {
-      data: processed,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
     };
+
+    return searchOrganizationsByProximity(this.prisma, {
+      where,
+      geo: toGeoQuery({ lat, lng, radiusKm }),
+      page,
+      limit,
+      hydrate: (args) => this.prisma.organization.findMany({ ...args, include: { hospitalDetail: true } }),
+    });
   }
 
   async findOne(id: string) {
@@ -131,54 +74,44 @@ export class HospitalService {
     return hospital;
   }
 
-  async updateCapacity(
-    orgId: string,
-    userId: string,
-    userRole: string,
-    dto: UpdateHospitalCapacityDto,
-  ) {
+  async updateCapacity(orgId: string, user: AuthenticatedUser, dto: UpdateHospitalCapacityDto) {
     const org = await this.prisma.organization.findUnique({
       where: { id: orgId },
       include: { hospitalDetail: true },
     });
 
-    if (!org) {
-      throw new NotFoundException('Hospital organization not found.');
-    }
-
-    if (org.userId !== userId && userRole !== 'ADMIN') {
-      throw new ForbiddenException('You do not have permission to update bed capacities for this hospital.');
-    }
+    // requireApproved: bed and ICU counts are exactly what a person in an
+    // emergency drives across a city on. A self-registered, unreviewed
+    // organisation must not be able to publish them.
+    assertOrgAccess(org, user, { requireApproved: true, resourceName: 'hospital' });
 
     return this.prisma.hospitalDetail.upsert({
       where: { orgId },
       update: {
-        ...dto,
+        ...(dto.totalBeds !== undefined && { totalBeds: dto.totalBeds }),
+        ...(dto.availableGeneralBeds !== undefined && { availableGeneralBeds: dto.availableGeneralBeds }),
+        ...(dto.availableIcuBeds !== undefined && { availableIcuBeds: dto.availableIcuBeds }),
+        ...(dto.emergencyAvailable !== undefined && { emergencyAvailable: dto.emergencyAvailable }),
+        ...(dto.hasOxygenSupport !== undefined && { hasOxygenSupport: dto.hasOxygenSupport }),
+        ...(dto.hasVentilators !== undefined && { hasVentilators: dto.hasVentilators }),
+        ...(dto.departments !== undefined && { departments: dto.departments }),
+        ...(dto.services !== undefined && { services: dto.services }),
+        ...(dto.operatingHours !== undefined && { operatingHours: dto.operatingHours }),
         availabilityUpdatedAt: new Date(),
       },
       create: {
         orgId,
-        totalBeds: dto.totalBeds || 100,
-        availableGeneralBeds: dto.availableGeneralBeds || 0,
-        availableIcuBeds: dto.availableIcuBeds || 0,
-        emergencyAvailable: dto.emergencyAvailable ?? true,
-        hasOxygenSupport: dto.hasOxygenSupport ?? true,
-        hasVentilators: dto.hasVentilators ?? true,
-        departments: dto.departments || [],
-        services: dto.services || [],
-        operatingHours: dto.operatingHours || '24/7',
+        totalBeds: dto.totalBeds ?? 0,
+        availableGeneralBeds: dto.availableGeneralBeds ?? 0,
+        availableIcuBeds: dto.availableIcuBeds ?? 0,
+        emergencyAvailable: dto.emergencyAvailable ?? false,
+        hasOxygenSupport: dto.hasOxygenSupport ?? false,
+        hasVentilators: dto.hasVentilators ?? false,
+        departments: dto.departments ?? [],
+        services: dto.services ?? [],
+        operatingHours: dto.operatingHours ?? '24/7',
         availabilityUpdatedAt: new Date(),
       },
     });
-  }
-
-  private calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 }

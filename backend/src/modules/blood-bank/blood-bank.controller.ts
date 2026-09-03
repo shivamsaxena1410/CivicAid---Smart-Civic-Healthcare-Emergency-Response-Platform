@@ -10,13 +10,13 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { BloodBankService } from './blood-bank.service';
 import { UpdateBloodInventoryDto } from './dto/update-inventory.dto';
-import { GeoSearchDto } from '../../common/dto/pagination.dto';
+import { BloodBankSearchDto } from './dto/blood-bank-search.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
-import { BloodType, Role } from '@prisma/client';
+import { Role } from '@prisma/client';
 
 @ApiTags('Blood Banks & Availability')
 @Controller('blood-banks')
@@ -26,18 +26,8 @@ export class BloodBankController {
   @Public()
   @Get()
   @ApiOperation({ summary: 'Search blood banks by blood group (A+, B+, O-, etc.) and proximity' })
-  @ApiQuery({ name: 'bloodType', enum: BloodType, required: false })
-  @ApiQuery({ name: 'minUnits', type: Number, required: false, example: 1 })
-  async findAll(
-    @Query() query: GeoSearchDto,
-    @Query('bloodType') bloodType?: BloodType,
-    @Query('minUnits') minUnits?: number,
-  ) {
-    return this.bloodBankService.findAll({
-      ...query,
-      bloodType,
-      minUnits: minUnits ? Number(minUnits) : 1,
-    });
+  async findAll(@Query() query: BloodBankSearchDto) {
+    return this.bloodBankService.findAll(query);
   }
 
   @Public()
@@ -57,6 +47,6 @@ export class BloodBankController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: UpdateBloodInventoryDto,
   ) {
-    return this.bloodBankService.updateInventory(id, user.id, user.role, dto);
+    return this.bloodBankService.updateInventory(id, user, dto);
   }
 }

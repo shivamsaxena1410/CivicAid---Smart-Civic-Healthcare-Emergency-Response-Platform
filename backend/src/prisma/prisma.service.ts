@@ -8,9 +8,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   async onModuleInit() {
     try {
       await this.$connect();
-      this.logger.log(' Connected to PostgreSQL database via Prisma.');
+      this.logger.log('Connected to PostgreSQL database via Prisma.');
     } catch (error) {
-      this.logger.warn(' Database connection deferred (will connect on first query).');
+      // Fail loudly. Swallowing this with a warning meant the API booted and
+      // reported healthy while every request 500'd on first query — the worst
+      // possible failure mode for an emergency-services platform. If the
+      // database is unreachable at startup, the process must not come up.
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to connect to PostgreSQL: ${detail}`);
+      throw error;
     }
   }
 

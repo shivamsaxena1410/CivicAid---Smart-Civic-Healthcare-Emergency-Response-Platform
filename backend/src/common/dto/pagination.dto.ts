@@ -1,4 +1,4 @@
-import { IsOptional, IsPositive, IsInt, Min, Max, IsString, IsNumber } from 'class-validator';
+import { IsOptional, IsInt, Min, Max, IsString, IsNumber } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -34,18 +34,30 @@ export class GeoSearchDto extends PaginationDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @Min(-90)
+  @Max(90)
   lat?: number;
 
   @ApiPropertyOptional({ description: 'Current longitude coordinate (e.g. 77.5946)' })
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @Min(-180)
+  @Max(180)
   lng?: number;
 
-  @ApiPropertyOptional({ description: 'Search radius in kilometers', default: 15 })
+  /**
+   * Bounded deliberately. This value is interpolated into a PostGIS
+   * `ST_DWithin` call, and an unbounded radius turns every "nearby" lookup into
+   * a full-table scan that also defeats the point of the search. `Min(0)` — not
+   * `IsPositive` — because 0 km is a meaningful query ("exactly here") and must
+   * not be silently treated as "no radius given".
+   */
+  @ApiPropertyOptional({ description: 'Search radius in kilometers (0-500)', default: 15 })
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  @IsPositive()
+  @Min(0)
+  @Max(500)
   radiusKm?: number = 15;
 }

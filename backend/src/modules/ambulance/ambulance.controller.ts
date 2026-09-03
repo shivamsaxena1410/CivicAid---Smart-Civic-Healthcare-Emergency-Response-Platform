@@ -14,6 +14,7 @@ import {
   CreateAmbulanceRequestDto,
   UpdateAmbulanceStatusDto,
   UpdateRequestStatusDto,
+  AmbulanceSearchDto,
 } from './dto/ambulance.dto';
 import { GeoSearchDto } from '../../common/dto/pagination.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -32,14 +33,8 @@ export class AmbulanceController {
   @Get()
   @ApiOperation({ summary: 'Search available emergency ambulance providers and vehicles' })
   @ApiQuery({ name: 'availableOnly', type: Boolean, required: false })
-  async findAll(
-    @Query() query: GeoSearchDto,
-    @Query('availableOnly') availableOnly?: boolean,
-  ) {
-    return this.ambulanceService.findAll({
-      ...query,
-      availableOnly: String(availableOnly) === 'true',
-    });
+  async findAll(@Query() query: AmbulanceSearchDto) {
+    return this.ambulanceService.findAll(query);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -58,19 +53,20 @@ export class AmbulanceController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get ambulance requests (citizen personal requests or provider dispatch queue)' })
   async getRequests(@CurrentUser() user: AuthenticatedUser) {
-    return this.ambulanceService.getRequests(user.id, user.role);
+    return this.ambulanceService.getRequests(user);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch('requests/:requestId/status')
   @ApiBearerAuth()
-  @Roles(Role.AMBULANCE, Role.ADMIN)
+  @Roles(Role.AMBULANCE, Role.ADMIN, Role.CITIZEN)
   @ApiOperation({ summary: 'Update ambulance dispatch status (ACCEPTED, EN_ROUTE, COMPLETED, CANCELLED)' })
   async updateRequestStatus(
     @Param('requestId') requestId: string,
+    @CurrentUser() user: AuthenticatedUser,
     @Body() dto: UpdateRequestStatusDto,
   ) {
-    return this.ambulanceService.updateRequestStatus(requestId, dto);
+    return this.ambulanceService.updateRequestStatus(requestId, user, dto);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -83,6 +79,6 @@ export class AmbulanceController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: UpdateAmbulanceStatusDto,
   ) {
-    return this.ambulanceService.updateAmbulanceStatus(ambulanceId, user.id, user.role, dto);
+    return this.ambulanceService.updateAmbulanceStatus(ambulanceId, user, dto);
   }
 }

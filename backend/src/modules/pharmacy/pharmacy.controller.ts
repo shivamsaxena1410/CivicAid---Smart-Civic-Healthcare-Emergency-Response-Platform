@@ -11,8 +11,8 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { PharmacyService } from './pharmacy.service';
-import { CreateMedicineDto } from './dto/create-medicine.dto';
-import { GeoSearchDto } from '../../common/dto/pagination.dto';
+import { CreateMedicineDto, UpdateMedicineDto } from './dto/create-medicine.dto';
+import { PharmacySearchDto, MedicineSearchDto } from './dto/pharmacy-search.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -28,32 +28,15 @@ export class PharmacyController {
   @Public()
   @Get()
   @ApiOperation({ summary: 'Search verified pharmacies with proximity calculation' })
-  @ApiQuery({ name: 'inStockOnly', type: Boolean, required: false })
-  async findAll(
-    @Query() query: GeoSearchDto,
-    @Query('inStockOnly') inStockOnly?: boolean,
-  ) {
-    return this.pharmacyService.findAll({
-      ...query,
-      inStockOnly: String(inStockOnly) === 'true',
-    });
+  async findAll(@Query() query: PharmacySearchDto) {
+    return this.pharmacyService.findAll(query);
   }
 
   @Public()
   @Get('medicines/search')
   @ApiOperation({ summary: 'Search medicines across all nearby pharmacies by generic or brand name' })
-  @ApiQuery({ name: 'medicineName', type: String, required: false })
-  @ApiQuery({ name: 'genericName', type: String, required: false })
-  async searchMedicines(
-    @Query() query: GeoSearchDto,
-    @Query('medicineName') medicineName?: string,
-    @Query('genericName') genericName?: string,
-  ) {
-    return this.pharmacyService.searchMedicines({
-      ...query,
-      medicineName,
-      genericName,
-    });
+  async searchMedicines(@Query() query: MedicineSearchDto) {
+    return this.pharmacyService.searchMedicines(query);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -66,7 +49,7 @@ export class PharmacyController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateMedicineDto,
   ) {
-    return this.pharmacyService.addMedicine(orgId, user.id, user.role, dto);
+    return this.pharmacyService.addMedicine(orgId, user, dto);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -77,9 +60,9 @@ export class PharmacyController {
   async updateMedicine(
     @Param('medicineId') medicineId: string,
     @CurrentUser() user: AuthenticatedUser,
-    @Body() dto: Partial<CreateMedicineDto>,
+    @Body() dto: UpdateMedicineDto,
   ) {
-    return this.pharmacyService.updateMedicine(medicineId, user.id, user.role, dto);
+    return this.pharmacyService.updateMedicine(medicineId, user, dto);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -91,6 +74,6 @@ export class PharmacyController {
     @Param('medicineId') medicineId: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.pharmacyService.deleteMedicine(medicineId, user.id, user.role);
+    return this.pharmacyService.deleteMedicine(medicineId, user);
   }
 }

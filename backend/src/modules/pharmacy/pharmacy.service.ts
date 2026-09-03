@@ -1,107 +1,108 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateMedicineDto } from './dto/create-medicine.dto';
-import { GeoSearchDto } from '../../common/dto/pagination.dto';
-import { OrgType, VerificationStatus } from '@prisma/client';
+import { CreateMedicineDto, UpdateMedicineDto } from './dto/create-medicine.dto';
+import { PharmacySearchDto, MedicineSearchDto } from './dto/pharmacy-search.dto';
+import { OrgType, Prisma, VerificationStatus } from '@prisma/client';
+import { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { assertOrgAccess } from '../../common/authorization/assert-org-access';
+import { distancesWithinRadius, searchOrganizationsByProximity, toGeoQuery } from '../../common/geo/geo-search';
 
 @Injectable()
 export class PharmacyService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(query: GeoSearchDto & { inStockOnly?: boolean }) {
-    const { page = 1, limit = 20, search, city, lat, lng, radiusKm = 20, inStockOnly } = query;
-    const skip = (page - 1) * limit;
+  async findAll(query: PharmacySearchDto) {
+    const { page = 1, limit = 20, search, city, lat, lng, radiusKm, inStockOnly } = query;
 
-    const where: any = {
+    const where: Prisma.OrganizationWhereInput = {
+      type: OrgType.PHARMACY,
+      verificationStatus: VerificationStatus.APPROVED,
+      ...(city && { city: { contains: city, mode: 'insensitive' as const } }),
+      ...(search && {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' as const } },
+          { address: { contains: search, mode: 'insensitive' as const } },
+          {
+            pharmacyMedicines: {
+              some: {
+                OR: [
+                  { medicineName: { contains: search, mode: 'insensitive' as const } },
+                  { genericName: { contains: search, mode: 'insensitive' as const } },
+                ],
+              },
+            },
+          },
+        ],
+      }),
+    };
+
+    return searchOrganizationsByProximity(this.prisma, {
+      where,
+      geo: toGeoQuery({ lat, lng, radiusKm }),
+      page,
+      limit,
+      hydrate: (args) =>
+        this.prisma.organization.findMany({
+          ...args,
+          include: {
+            pharmacyMedicines: {
+              where: inStockOnly ? { inStock: true } : undefined,
+              take: 20,
+              orderBy: [{ inStock: 'desc' }, { medicineName: 'asc' }],
+            },
+          },
+        }),
+    });
+  }
+
+  /**
+   * Medicine-first search: the rows are medicines, each attached to a pharmacy.
+   *
+   * The proximity helper is organisation-first, so this path resolves the
+   * in-radius pharmacies up front and constrains the medicine query to them.
+   * That keeps the radius filter in Postgres and applies it *before* pagination
+   * — previously the page was fetched first and then filtered in JavaScript, so
+   * a search for a drug within 5 km could return an empty page while stock
+   * existed 2 km away.
+   */
+  async searchMedicines(query: MedicineSearchDto) {
+    const { page = 1, limit = 20, search, medicineName, genericName, lat, lng, radiusKm, inStockOnly } = query;
+    const skip = (page - 1) * limit;
+    const searchTerm = search || medicineName || genericName;
+    const geo = toGeoQuery({ lat, lng, radiusKm });
+
+    const organizationWhere: Prisma.OrganizationWhereInput = {
       type: OrgType.PHARMACY,
       verificationStatus: VerificationStatus.APPROVED,
     };
 
-    if (city) {
-      where.city = { contains: city, mode: 'insensitive' };
+    let distances: Map<string, number> | null = null;
+    if (geo) {
+      const candidates = await this.prisma.organization.findMany({
+        where: organizationWhere,
+        select: { id: true },
+      });
+      distances = await distancesWithinRadius(
+        this.prisma,
+        candidates.map((c) => c.id),
+        geo,
+      );
+      if (distances.size === 0) {
+        return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+      }
     }
 
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { address: { contains: search, mode: 'insensitive' } },
-        {
-          pharmacyMedicines: {
-            some: {
-              OR: [
-                { medicineName: { contains: search, mode: 'insensitive' } },
-                { genericName: { contains: search, mode: 'insensitive' } },
-              ],
-            },
-          },
-        },
-      ];
-    }
-
-    const [total, pharmacies] = await Promise.all([
-      this.prisma.organization.count({ where }),
-      this.prisma.organization.findMany({
-        where,
-        include: {
-          pharmacyMedicines: {
-            where: inStockOnly ? { inStock: true } : undefined,
-            take: 20,
-          },
-        },
-        skip,
-        take: limit,
+    const where: Prisma.PharmacyMedicineWhereInput = {
+      organization: distances ? { ...organizationWhere, id: { in: [...distances.keys()] } } : organizationWhere,
+      ...(inStockOnly && { inStock: true }),
+      ...(searchTerm && {
+        OR: [
+          { medicineName: { contains: searchTerm, mode: 'insensitive' as const } },
+          { genericName: { contains: searchTerm, mode: 'insensitive' as const } },
+          { category: { contains: searchTerm, mode: 'insensitive' as const } },
+        ],
       }),
-    ]);
-
-    let processed = pharmacies.map((p) => {
-      let distanceKm: number | null = null;
-      if (lat && lng) {
-        distanceKm = this.calculateHaversineDistance(lat, lng, p.latitude, p.longitude);
-      }
-      return {
-        ...p,
-        distanceKm: distanceKm ? Number(distanceKm.toFixed(2)) : null,
-      };
-    });
-
-    if (lat && lng) {
-      if (radiusKm) {
-        processed = processed.filter((p) => p.distanceKm === null || p.distanceKm <= radiusKm);
-      }
-      processed.sort((a, b) => (a.distanceKm ?? 9999) - (b.distanceKm ?? 9999));
-    }
-
-    return {
-      data: processed,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
     };
-  }
-
-  async searchMedicines(query: GeoSearchDto & { medicineName?: string; genericName?: string }) {
-    const { page = 1, limit = 20, search, medicineName, genericName, lat, lng, radiusKm = 20 } = query;
-    const skip = (page - 1) * limit;
-
-    const searchTerm = search || medicineName || genericName;
-
-    const where: any = {
-      organization: {
-        type: OrgType.PHARMACY,
-        verificationStatus: VerificationStatus.APPROVED,
-      },
-    };
-
-    if (searchTerm) {
-      where.OR = [
-        { medicineName: { contains: searchTerm, mode: 'insensitive' } },
-        { genericName: { contains: searchTerm, mode: 'insensitive' } },
-        { category: { contains: searchTerm, mode: 'insensitive' } },
-      ];
-    }
 
     const [total, medicines] = await Promise.all([
       this.prisma.pharmacyMedicine.count({ where }),
@@ -122,49 +123,23 @@ export class PharmacyService {
         },
         skip,
         take: limit,
-        orderBy: [{ inStock: 'desc' }, { medicineName: 'asc' }],
+        orderBy: [{ inStock: 'desc' }, { medicineName: 'asc' }, { id: 'asc' }],
       }),
     ]);
 
-    let processed = medicines.map((m) => {
-      let distanceKm: number | null = null;
-      if (lat && lng && m.organization) {
-        distanceKm = this.calculateHaversineDistance(lat, lng, m.organization.latitude, m.organization.longitude);
-      }
-      return {
-        ...m,
-        distanceKm: distanceKm ? Number(distanceKm.toFixed(2)) : null,
-      };
-    });
-
-    if (lat && lng) {
-      if (radiusKm) {
-        processed = processed.filter((m) => m.distanceKm === null || m.distanceKm <= radiusKm);
-      }
-      processed.sort((a, b) => (a.distanceKm ?? 9999) - (b.distanceKm ?? 9999));
-    }
-
     return {
-      data: processed,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
+      data: medicines.map((m) => ({
+        ...m,
+        distanceKm: distances?.get(m.orgId) ?? null,
+      })),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
 
-  async addMedicine(orgId: string, userId: string, userRole: string, dto: CreateMedicineDto) {
+  async addMedicine(orgId: string, user: AuthenticatedUser, dto: CreateMedicineDto) {
     const org = await this.prisma.organization.findUnique({ where: { id: orgId } });
 
-    if (!org) {
-      throw new NotFoundException('Pharmacy organization not found.');
-    }
-
-    if (org.userId !== userId && userRole !== 'ADMIN') {
-      throw new ForbiddenException('You do not have permission to manage medicines for this pharmacy.');
-    }
+    assertOrgAccess(org, user, { requireApproved: true, resourceName: 'pharmacy' });
 
     return this.prisma.pharmacyMedicine.create({
       data: {
@@ -180,12 +155,7 @@ export class PharmacyService {
     });
   }
 
-  async updateMedicine(
-    medicineId: string,
-    userId: string,
-    userRole: string,
-    dto: Partial<CreateMedicineDto>,
-  ) {
+  async updateMedicine(medicineId: string, user: AuthenticatedUser, dto: UpdateMedicineDto) {
     const medicine = await this.prisma.pharmacyMedicine.findUnique({
       where: { id: medicineId },
       include: { organization: true },
@@ -195,20 +165,23 @@ export class PharmacyService {
       throw new NotFoundException('Medicine not found.');
     }
 
-    if (medicine.organization.userId !== userId && userRole !== 'ADMIN') {
-      throw new ForbiddenException('You do not have permission to edit this medicine record.');
-    }
+    assertOrgAccess(medicine.organization, user, { requireApproved: true, resourceName: 'pharmacy' });
 
     return this.prisma.pharmacyMedicine.update({
       where: { id: medicineId },
       data: {
-        ...dto,
+        ...(dto.medicineName !== undefined && { medicineName: dto.medicineName.trim() }),
+        ...(dto.genericName !== undefined && { genericName: dto.genericName?.trim() ?? null }),
+        ...(dto.category !== undefined && { category: dto.category?.trim() ?? null }),
+        ...(dto.price !== undefined && { price: dto.price }),
+        ...(dto.inStock !== undefined && { inStock: dto.inStock }),
+        ...(dto.quantity !== undefined && { quantity: dto.quantity }),
         lastUpdated: new Date(),
       },
     });
   }
 
-  async deleteMedicine(medicineId: string, userId: string, userRole: string) {
+  async deleteMedicine(medicineId: string, user: AuthenticatedUser) {
     const medicine = await this.prisma.pharmacyMedicine.findUnique({
       where: { id: medicineId },
       include: { organization: true },
@@ -218,21 +191,9 @@ export class PharmacyService {
       throw new NotFoundException('Medicine not found.');
     }
 
-    if (medicine.organization.userId !== userId && userRole !== 'ADMIN') {
-      throw new ForbiddenException('You do not have permission to delete this medicine record.');
-    }
+    assertOrgAccess(medicine.organization, user, { resourceName: 'pharmacy' });
 
     await this.prisma.pharmacyMedicine.delete({ where: { id: medicineId } });
     return { message: 'Medicine deleted successfully.' };
-  }
-
-  private calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 }

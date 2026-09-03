@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { SchemeService } from './scheme.service';
-import { CreateSchemeDto } from './dto/create-scheme.dto';
+import { CreateSchemeDto, UpdateSchemeDto } from './dto/create-scheme.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -62,9 +62,10 @@ export class SchemeController {
   @ApiOperation({ summary: 'Update health scheme information' })
   async update(
     @Param('id') id: string,
-    @Body() dto: Partial<CreateSchemeDto>,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UpdateSchemeDto,
   ) {
-    return this.schemeService.update(id, dto);
+    return this.schemeService.update(id, user, dto);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -72,7 +73,7 @@ export class SchemeController {
   @ApiBearerAuth()
   @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Delete a health scheme' })
-  async delete(@Param('id') id: string) {
-    return this.schemeService.delete(id);
+  async delete(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.schemeService.delete(id, user);
   }
 }

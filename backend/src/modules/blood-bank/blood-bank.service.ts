@@ -1,83 +1,45 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateBloodInventoryDto } from './dto/update-inventory.dto';
-import { GeoSearchDto } from '../../common/dto/pagination.dto';
-import { BloodType, OrgType, VerificationStatus } from '@prisma/client';
+import { BloodBankSearchDto } from './dto/blood-bank-search.dto';
+import { OrgType, Prisma, VerificationStatus } from '@prisma/client';
+import { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { assertOrgAccess } from '../../common/authorization/assert-org-access';
+import { searchOrganizationsByProximity, toGeoQuery } from '../../common/geo/geo-search';
 
 @Injectable()
 export class BloodBankService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(query: GeoSearchDto & { bloodType?: BloodType; minUnits?: number }) {
-    const { page = 1, limit = 20, search, city, lat, lng, radiusKm = 20, bloodType, minUnits = 1 } = query;
-    const skip = (page - 1) * limit;
+  async findAll(query: BloodBankSearchDto) {
+    const { page = 1, limit = 20, search, city, lat, lng, radiusKm, bloodType, minUnits = 1 } = query;
 
-    const where: any = {
+    const where: Prisma.OrganizationWhereInput = {
       type: OrgType.BLOOD_BANK,
       verificationStatus: VerificationStatus.APPROVED,
-    };
-
-    if (city) {
-      where.city = { contains: city, mode: 'insensitive' };
-    }
-
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { address: { contains: search, mode: 'insensitive' } },
-      ];
-    }
-
-    if (bloodType) {
-      where.bloodBankInventory = {
-        some: {
-          bloodType,
-          unitsAvailable: { gte: minUnits },
-        },
-      };
-    }
-
-    const [total, bloodBanks] = await Promise.all([
-      this.prisma.organization.count({ where }),
-      this.prisma.organization.findMany({
-        where,
-        include: {
-          bloodBankInventory: {
-            orderBy: { bloodType: 'asc' },
-          },
-        },
-        skip,
-        take: limit,
+      ...(city && { city: { contains: city, mode: 'insensitive' as const } }),
+      ...(search && {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' as const } },
+          { address: { contains: search, mode: 'insensitive' as const } },
+        ],
       }),
-    ]);
-
-    let processed = bloodBanks.map((bb) => {
-      let distanceKm: number | null = null;
-      if (lat && lng) {
-        distanceKm = this.calculateHaversineDistance(lat, lng, bb.latitude, bb.longitude);
-      }
-      return {
-        ...bb,
-        distanceKm: distanceKm ? Number(distanceKm.toFixed(2)) : null,
-      };
-    });
-
-    if (lat && lng) {
-      if (radiusKm) {
-        processed = processed.filter((bb) => bb.distanceKm === null || bb.distanceKm <= radiusKm);
-      }
-      processed.sort((a, b) => (a.distanceKm ?? 9999) - (b.distanceKm ?? 9999));
-    }
-
-    return {
-      data: processed,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
+      ...(bloodType && {
+        bloodBankInventory: { some: { bloodType, unitsAvailable: { gte: minUnits } } },
+      }),
     };
+
+    return searchOrganizationsByProximity(this.prisma, {
+      where,
+      geo: toGeoQuery({ lat, lng, radiusKm }),
+      page,
+      limit,
+      hydrate: (args) =>
+        this.prisma.organization.findMany({
+          ...args,
+          include: { bloodBankInventory: { orderBy: { bloodType: 'asc' } } },
+        }),
+    });
   }
 
   async findOne(id: string) {
@@ -97,53 +59,28 @@ export class BloodBankService {
     return bloodBank;
   }
 
-  async updateInventory(
-    orgId: string,
-    userId: string,
-    userRole: string,
-    dto: UpdateBloodInventoryDto,
-  ) {
+  async updateInventory(orgId: string, user: AuthenticatedUser, dto: UpdateBloodInventoryDto) {
     const org = await this.prisma.organization.findUnique({ where: { id: orgId } });
 
-    if (!org) {
-      throw new NotFoundException('Blood bank not found.');
-    }
+    assertOrgAccess(org, user, { requireApproved: true, resourceName: 'blood bank' });
 
-    if (org.userId !== userId && userRole !== 'ADMIN') {
-      throw new ForbiddenException('You do not have permission to update inventory for this blood bank.');
-    }
-
-    for (const item of dto.inventory) {
-      await this.prisma.bloodBankInventory.upsert({
-        where: {
-          orgId_bloodType: {
+    // One transaction: a partial inventory update would leave the bank
+    // advertising stock for some blood types and stale figures for others.
+    await this.prisma.$transaction(
+      dto.inventory.map((item) =>
+        this.prisma.bloodBankInventory.upsert({
+          where: { orgId_bloodType: { orgId, bloodType: item.bloodType } },
+          update: { unitsAvailable: item.unitsAvailable, lastUpdated: new Date() },
+          create: {
             orgId,
             bloodType: item.bloodType,
+            unitsAvailable: item.unitsAvailable,
+            lastUpdated: new Date(),
           },
-        },
-        update: {
-          unitsAvailable: item.unitsAvailable,
-          lastUpdated: new Date(),
-        },
-        create: {
-          orgId,
-          bloodType: item.bloodType,
-          unitsAvailable: item.unitsAvailable,
-          lastUpdated: new Date(),
-        },
-      });
-    }
+        }),
+      ),
+    );
 
     return this.findOne(orgId);
-  }
-
-  private calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 }

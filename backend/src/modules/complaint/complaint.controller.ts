@@ -51,8 +51,8 @@ export class ComplaintController {
   @Get(':id')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get full complaint lifecycle details with investigation notes' })
-  async findOne(@Param('id') id: string) {
-    return this.complaintService.findOne(id);
+  async findOne(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.complaintService.findOne(id, user);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -65,6 +65,6 @@ export class ComplaintController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: ResolveComplaintDto,
   ) {
-    return this.complaintService.resolve(id, user.id, dto);
+    return this.complaintService.resolve(id, user, dto);
   }
 }

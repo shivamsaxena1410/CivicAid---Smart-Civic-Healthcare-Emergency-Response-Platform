@@ -1,8 +1,11 @@
-import { Injectable, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateOrganizationDto } from './dto/create-organization.dto';
+import { CreateOrganizationDto, UpdateOrganizationDto } from './dto/create-organization.dto';
 import { GeoSearchDto } from '../../common/dto/pagination.dto';
-import { OrgType, VerificationStatus } from '@prisma/client';
+import { OrgType, Prisma, VerificationStatus } from '@prisma/client';
+import { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { assertOrgAccess } from '../../common/authorization/assert-org-access';
+import { searchOrganizationsByProximity, toGeoQuery } from '../../common/geo/geo-search';
 
 @Injectable()
 export class OrganizationService {
@@ -33,77 +36,40 @@ export class OrganizationService {
   }
 
   async findAll(query: GeoSearchDto & { type?: OrgType; status?: VerificationStatus }) {
-    const { page = 1, limit = 20, search, city, type, status, lat, lng, radiusKm = 15 } = query;
-    const skip = (page - 1) * limit;
+    const { page = 1, limit = 20, search, city, type, status, lat, lng, radiusKm } = query;
 
-    const where: any = {};
-
-    if (status) {
-      where.verificationStatus = status;
-    } else {
-      where.verificationStatus = VerificationStatus.APPROVED; // Default only approved
-    }
-
-    if (type) {
-      where.type = type;
-    }
-
-    if (city) {
-      where.city = { contains: city, mode: 'insensitive' };
-    }
-
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { address: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-      ];
-    }
-
-    const [total, items] = await Promise.all([
-      this.prisma.organization.count({ where }),
-      this.prisma.organization.findMany({
-        where,
-        include: {
-          hospitalDetail: true,
-          bloodBankInventory: true,
-          ambulanceDetails: true,
-        },
-        skip,
-        take: limit,
-        orderBy: { name: 'asc' },
+    const where: Prisma.OrganizationWhereInput = {
+      // Unapproved organisations are excluded unless a status is asked for
+      // explicitly. The status filter is only reachable by admins — see
+      // organization.controller.ts — so this endpoint cannot be used to
+      // enumerate pending registrations.
+      verificationStatus: status ?? VerificationStatus.APPROVED,
+      ...(type && { type }),
+      ...(city && { city: { contains: city, mode: 'insensitive' as const } }),
+      ...(search && {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' as const } },
+          { address: { contains: search, mode: 'insensitive' as const } },
+          { description: { contains: search, mode: 'insensitive' as const } },
+        ],
       }),
-    ]);
-
-    // If user provided GPS coordinates, compute spherical distance & sort by proximity
-    let processedItems = items.map((item) => {
-      let distanceKm: number | null = null;
-      if (lat && lng) {
-        distanceKm = this.calculateHaversineDistance(lat, lng, item.latitude, item.longitude);
-      }
-      return {
-        ...item,
-        distanceKm: distanceKm ? Number(distanceKm.toFixed(2)) : null,
-      };
-    });
-
-    if (lat && lng) {
-      // Filter within radius if specified
-      if (radiusKm) {
-        processedItems = processedItems.filter((i) => i.distanceKm === null || i.distanceKm <= radiusKm);
-      }
-      processedItems.sort((a, b) => (a.distanceKm ?? 9999) - (b.distanceKm ?? 9999));
-    }
-
-    return {
-      data: processedItems,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
     };
+
+    return searchOrganizationsByProximity(this.prisma, {
+      where,
+      geo: toGeoQuery({ lat, lng, radiusKm }),
+      page,
+      limit,
+      hydrate: (args) =>
+        this.prisma.organization.findMany({
+          ...args,
+          include: {
+            hospitalDetail: true,
+            bloodBankInventory: true,
+            ambulanceDetails: true,
+          },
+        }),
+    });
   }
 
   async findOne(id: string) {
@@ -135,41 +101,35 @@ export class OrganizationService {
     return org;
   }
 
-  async update(id: string, userId: string, userRole: string, dto: Partial<CreateOrganizationDto>) {
+  async update(id: string, user: AuthenticatedUser, dto: UpdateOrganizationDto) {
     const org = await this.prisma.organization.findUnique({ where: { id } });
 
-    if (!org) {
-      throw new NotFoundException('Organization not found.');
-    }
+    assertOrgAccess(org, user);
 
-    if (org.userId !== userId && userRole !== 'ADMIN') {
-      throw new ForbiddenException('You do not have permission to update this organization.');
-    }
-
+    // Explicit field writes. `data: { ...dto }` forwarded whatever the client
+    // sent, and since the body was typed `Partial<CreateOrganizationDto>` it was
+    // never validated (see UpdateOrganizationDto for why), so `userId` and
+    // `verificationStatus` were client-settable: an owner could approve their
+    // own organisation, or reassign it to another account.
     return this.prisma.organization.update({
       where: { id },
       data: {
-        ...dto,
+        ...(dto.name !== undefined && { name: dto.name.trim() }),
+        ...(dto.description !== undefined && { description: dto.description?.trim() ?? null }),
+        ...(dto.address !== undefined && { address: dto.address.trim() }),
+        ...(dto.city !== undefined && { city: dto.city.trim() }),
+        ...(dto.state !== undefined && { state: dto.state.trim() }),
+        ...(dto.pincode !== undefined && { pincode: dto.pincode.trim() }),
+        ...(dto.latitude !== undefined && { latitude: dto.latitude }),
+        ...(dto.longitude !== undefined && { longitude: dto.longitude }),
+        ...(dto.phone !== undefined && { phone: dto.phone.trim() }),
+        ...(dto.email !== undefined && { email: dto.email.toLowerCase().trim() }),
+        ...(dto.website !== undefined && { website: dto.website?.trim() ?? null }),
+        ...(dto.licenseNumber !== undefined && { licenseNumber: dto.licenseNumber?.trim() ?? null }),
       },
       include: {
         hospitalDetail: true,
       },
     });
-  }
-
-  // Haversine distance utility (Spherical earth formula)
-  private calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 6371; // Radius of the Earth in km
-    const dLat = this.deg2rad(lat2 - lat1);
-    const dLon = this.deg2rad(lon2 - lon1);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(this.deg2rad(lat1)) * Math.cos(this.deg2rad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  }
-
-  private deg2rad(deg: number): number {
-    return deg * (Math.PI / 180);
   }
 }
