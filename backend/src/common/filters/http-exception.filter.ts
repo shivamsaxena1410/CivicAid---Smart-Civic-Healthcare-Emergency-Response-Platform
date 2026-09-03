@@ -47,11 +47,23 @@ function mapPrismaError(exception: Prisma.PrismaClientKnownRequestError): {
         code: 'INVALID_RELATION',
         message: 'This change would break a required relationship between records.',
       };
-    default:
+    case 'P2023':
+      // Malformed id in a path parameter (e.g. a non-UUID where the column is
+      // uuid). The resource cannot exist, and answering 404 keeps the response
+      // identical to a well-formed id that matches nothing.
       return {
-        status: HttpStatus.BAD_REQUEST,
-        code: 'DATABASE_REQUEST_ERROR',
-        message: 'The request could not be completed.',
+        status: HttpStatus.NOT_FOUND,
+        code: 'NOT_FOUND',
+        message: 'The requested record was not found.',
+      };
+    default:
+      // Anything else — a failed raw query, a timeout, a constraint we did not
+      // anticipate — is a server-side fault. Reporting it as 400 blames the
+      // client for our bug and hides it from error-rate monitoring.
+      return {
+        status: HttpStatus.INTERNAL_SERVER_ERROR,
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'An unexpected server error occurred. Please try again later.',
       };
   }
 }
@@ -99,9 +111,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
       status = mapped.status;
       errorCode = mapped.code;
       message = mapped.message;
-      this.logger.warn(
-        `[${correlationId}] ${request.method} ${request.url} — Prisma ${exception.code}: ${exception.message}`,
-      );
+      const line = `[${correlationId}] ${request.method} ${request.url} — Prisma ${exception.code}: ${exception.message}`;
+      // Unmapped Prisma codes are our bug, not the caller's; log at error level
+      // with the stack so they surface instead of blending into 4xx noise.
+      if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+        this.logger.error(line, exception.stack);
+      } else {
+        this.logger.warn(line);
+      }
     } else if (exception instanceof Prisma.PrismaClientInitializationError) {
       // The database is unreachable. 503 rather than 500: the request is
       // legitimate and will succeed once the dependency recovers.

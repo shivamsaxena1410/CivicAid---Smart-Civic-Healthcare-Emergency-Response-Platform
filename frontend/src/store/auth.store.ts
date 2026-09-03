@@ -1,112 +1,145 @@
 import { create } from 'zustand';
 import { User, Role } from '../types';
-import { api } from '../lib/api';
+import { api, clearSession, storeTokens, ACCESS_TOKEN_KEY, USER_KEY } from '../lib/api';
+
+interface LoginResult {
+  user: User;
+  tokens: { accessToken: string; refreshToken: string };
+}
 
 interface AuthState {
   user: User | null;
   token: string | null;
   isLoading: boolean;
+  /** Distinguishes "not checked yet" from "checked, not signed in". */
+  isInitialized: boolean;
   error: string | null;
-  login: (email: string, password?: string) => Promise<void>;
-  demoLogin: (role: Role) => Promise<void>;
+  login: (email: string, password: string) => Promise<User>;
+  register: (input: {
+    email: string;
+    password: string;
+    name: string;
+    phone?: string;
+    role?: Role;
+  }) => Promise<User>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
   setUser: (user: User | null) => void;
+  clearError: () => void;
 }
 
-const DEMO_CREDENTIALS: Record<Role, { email: string; name: string }> = {
-  ADMIN: { email: 'admin@civicconnect.org', name: 'Dr. Ramesh Sharma (Admin)' },
-  AUTHORITY: { email: 'health.dept@karnataka.gov.in', name: 'District Health Officer (Authority)' },
-  CITIZEN: { email: 'citizen@example.com', name: 'Priya Sundaram (Citizen)' },
-  HOSPITAL: { email: 'admin@manipalhospitals.com', name: 'Manipal Hospital Operations' },
-  BLOOD_BANK: { email: 'contact@redcrossbangalore.org', name: 'Red Cross Blood Centre' },
-  PHARMACY: { email: 'koramangala@apollopharmacy.org', name: 'Apollo Pharmacy Lead' },
-  AMBULANCE: { email: 'dispatch@stanplus.com', name: 'StanPlus Emergency Fleet' },
-  NGO: { email: 'care@sevadrive.org', name: 'Seva Health Foundation' },
-};
-
+/**
+ * There is no offline/mock branch here.
+ *
+ * The inherited store caught a failed login and, if the email matched a
+ * hardcoded table, wrote a fabricated user and the literal string
+ * `mock_demo_jwt_token_2026` into localStorage — so a wrong password, or an API
+ * that was simply down, produced a signed-in ADMIN session in the UI. Every
+ * subsequent request carried a token the backend rejects, meaning the app
+ * showed authenticated screens over data it never actually fetched. Auth state
+ * now comes from the API or not at all.
+ *
+ * Demo accounts live in the seed (see backend/prisma/seed.ts) and are listed on
+ * the login page; they authenticate for real.
+ */
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   token: null,
   isLoading: false,
+  isInitialized: false,
   error: null,
 
-  login: async (email: string, password = 'Password123!') => {
+  login: async (email, password) => {
     set({ isLoading: true, error: null });
     try {
-      const response: any = await api.post('/auth/login', { email, password });
-      const { user, tokens } = response.data || response;
+      const res = await api.post('/auth/login', { email, password });
+      const { user, tokens } = (res as unknown as { data: LoginResult }).data;
 
-      localStorage.setItem('civicconnect_access_token', tokens.accessToken);
-      localStorage.setItem('civicconnect_refresh_token', tokens.refreshToken);
-      localStorage.setItem('civicconnect_user', JSON.stringify(user));
-
-      set({ user, token: tokens.accessToken, isLoading: false });
-    } catch (err: any) {
-      // For instant offline demo responsiveness if backend database isn't locally running
-      const matchedRole = Object.entries(DEMO_CREDENTIALS).find(([_, cred]) => cred.email === email);
-      if (matchedRole) {
-        const [roleKey, cred] = matchedRole;
-        const mockUser: User = {
-          id: `mock-user-${roleKey.toLowerCase()}`,
-          email: cred.email,
-          name: cred.name,
-          role: roleKey as Role,
-          isActive: true,
-          isVerified: true,
-          createdAt: new Date().toISOString(),
-        };
-        localStorage.setItem('civicconnect_user', JSON.stringify(mockUser));
-        localStorage.setItem('civicconnect_access_token', 'mock_demo_jwt_token_2026');
-        set({ user: mockUser, token: 'mock_demo_jwt_token_2026', isLoading: false });
-        return;
-      }
-
-      set({ error: err.message || 'Login failed', isLoading: false });
+      storeTokens(tokens);
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+      set({ user, token: tokens.accessToken, isLoading: false, isInitialized: true });
+      return user;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Sign-in failed.';
+      set({ error: message, isLoading: false, user: null, token: null });
       throw err;
     }
   },
 
-  demoLogin: async (role: Role) => {
-    const cred = DEMO_CREDENTIALS[role];
-    if (cred) {
-      await get().login(cred.email, 'Password123!');
+  register: async (input) => {
+    set({ isLoading: true, error: null });
+    try {
+      const res = await api.post('/auth/register', input);
+      const { user, tokens } = (res as unknown as { data: LoginResult }).data;
+
+      storeTokens(tokens);
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+      set({ user, token: tokens.accessToken, isLoading: false, isInitialized: true });
+      return user;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Registration failed.';
+      set({ error: message, isLoading: false });
+      throw err;
     }
   },
 
   logout: async () => {
     try {
       await api.post('/auth/logout');
-    } catch (e) {
-      // Ignore logout network errors
+    } catch {
+      // A failed logout call still clears the client session below; the server
+      // revokes on refresh-token reuse regardless.
     } finally {
-      localStorage.removeItem('civicconnect_access_token');
-      localStorage.removeItem('civicconnect_refresh_token');
-      localStorage.removeItem('civicconnect_user');
-      set({ user: null, token: null });
+      clearSession();
+      set({ user: null, token: null, isInitialized: true });
     }
   },
 
   checkAuth: async () => {
     if (typeof window === 'undefined') return;
 
-    const storedUser = localStorage.getItem('civicconnect_user');
-    const storedToken = localStorage.getItem('civicconnect_access_token');
+    const storedToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+    if (!storedToken) {
+      set({ user: null, token: null, isInitialized: true });
+      return;
+    }
 
-    if (storedUser && storedToken) {
+    // Render optimistically from the cached profile, then confirm with the API.
+    const storedUser = localStorage.getItem(USER_KEY);
+    if (storedUser) {
       try {
-        set({ user: JSON.parse(storedUser), token: storedToken });
-        const res: any = await api.get('/auth/me');
-        if (res.data) {
-          set({ user: res.data });
-          localStorage.setItem('civicconnect_user', JSON.stringify(res.data));
-        }
-      } catch (e) {
-        // Fallback to local stored session if offline
-        set({ user: JSON.parse(storedUser), token: storedToken });
+        set({ user: JSON.parse(storedUser) as User, token: storedToken });
+      } catch {
+        localStorage.removeItem(USER_KEY);
       }
+    }
+
+    try {
+      const res = await api.get('/auth/me');
+      const user = (res as unknown as { data: User }).data;
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+      set({ user, token: localStorage.getItem(ACCESS_TOKEN_KEY), isInitialized: true });
+    } catch {
+      // The inherited version fell back to the cached user "if offline", which
+      // meant a revoked or expired session kept rendering as signed-in
+      // indefinitely. If the server will not confirm the session, there is no
+      // session. (The api interceptor has already tried a token refresh.)
+      clearSession();
+      set({ user: null, token: null, isInitialized: true });
     }
   },
 
-  setUser: (user: User | null) => set({ user }),
+  setUser: (user) => set({ user }),
+  clearError: () => set({ error: null }),
 }));
+
+/** Roles that operate a facility and therefore see the provider console. */
+export const PROVIDER_ROLES: Role[] = ['HOSPITAL', 'BLOOD_BANK', 'PHARMACY', 'AMBULANCE', 'NGO'];
+
+export function isProvider(role?: Role | null): boolean {
+  return !!role && PROVIDER_ROLES.includes(role);
+}
+
+export function isStaff(role?: Role | null): boolean {
+  return role === 'ADMIN' || role === 'AUTHORITY';
+}

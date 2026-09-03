@@ -9,7 +9,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RegisterDto, SELF_REGISTERABLE_ROLES } from './dto/register.dto';
 import { LoginDto, RefreshTokenDto } from './dto/login.dto';
@@ -19,6 +19,8 @@ interface RefreshPayload {
   sub: string;
   email: string;
   role: string;
+  /** Per-token unique id. See `generateTokens` for why this is required. */
+  jti?: string;
   /** Standard JWT expiry claim, seconds since epoch. */
   exp: number;
   iat: number;
@@ -358,10 +360,19 @@ export class AuthService {
         secret: accessSecret,
         expiresIn: accessExpiresInSeconds,
       }),
-      this.jwtService.signAsync(payload, {
-        secret: refreshSecret,
-        expiresIn: refreshExpiresInSeconds,
-      }),
+      // `jti` is not decorative. Without it a refresh token's payload is just
+      // {sub, email, role, iat, exp}, and `iat`/`exp` have one-second
+      // resolution — so two tokens minted for the same user within the same
+      // second are byte-identical. Rotation then "issued" the token it had just
+      // revoked, and the insert collided with the unique index on `tokenHash`.
+      // A random jti guarantees every issued token is distinct.
+      this.jwtService.signAsync(
+        { ...payload, jti: randomUUID() },
+        {
+          secret: refreshSecret,
+          expiresIn: refreshExpiresInSeconds,
+        },
+      ),
     ]);
 
     return {

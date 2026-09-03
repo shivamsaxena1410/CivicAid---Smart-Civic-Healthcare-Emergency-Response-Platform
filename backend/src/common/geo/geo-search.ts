@@ -27,6 +27,10 @@ import { PrismaService } from '../../prisma/prisma.service';
  * `organizations.location` can be used: `ST_DWithin` filters, `ST_Distance`
  * orders and produces the returned distance, `COUNT(*) OVER ()` counts the
  * filtered set, and LIMIT/OFFSET apply last.
+ *
+ * Ids are bound as `= ANY(ARRAY[...]::uuid[])` rather than `IN (...)`. Prisma
+ * sends string parameters as `text`, and Postgres has no `uuid = text`
+ * operator, so the plain `IN` form fails with 42883 at runtime.
  */
 
 export interface GeoQuery {
@@ -91,7 +95,7 @@ async function paginateByDistance(
       ) / 1000.0 AS distance_km,
       COUNT(*) OVER () AS total
     FROM "organizations" o
-    WHERE o."id" IN (${Prisma.join(candidateIds)})
+    WHERE o."id" = ANY(ARRAY[${Prisma.join(candidateIds)}]::uuid[])
       AND o."location" IS NOT NULL
       AND ST_DWithin(
         o."location",
@@ -219,7 +223,7 @@ export async function distancesWithinRadius(
         ST_SetSRID(ST_MakePoint(${geo.lng}::double precision, ${geo.lat}::double precision), 4326)::geography
       ) / 1000.0 AS distance_km
     FROM "organizations" o
-    WHERE o."id" IN (${Prisma.join(orgIds)})
+    WHERE o."id" = ANY(ARRAY[${Prisma.join(orgIds)}]::uuid[])
       AND o."location" IS NOT NULL
       AND ST_DWithin(
         o."location",

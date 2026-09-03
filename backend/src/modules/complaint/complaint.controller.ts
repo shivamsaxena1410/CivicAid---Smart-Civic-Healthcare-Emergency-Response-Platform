@@ -8,15 +8,15 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { ComplaintService } from './complaint.service';
 import { CreateComplaintDto, ResolveComplaintDto } from './dto/complaint.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
+import { ComplaintQueryDto } from './dto/complaint-query.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
-import { ComplaintStatus, Role } from '@prisma/client';
+import { Role } from '@prisma/client';
 
 @ApiTags('Citizen Grievances & Complaints')
 @Controller('complaints')
@@ -38,13 +38,11 @@ export class ComplaintController {
   @Get()
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List complaints (scoped to citizen personal filings or admin/authority oversight)' })
-  @ApiQuery({ name: 'status', enum: ComplaintStatus, required: false })
   async findAll(
     @CurrentUser() user: AuthenticatedUser,
-    @Query() query: PaginationDto,
-    @Query('status') status?: ComplaintStatus,
+    @Query() query: ComplaintQueryDto,
   ) {
-    return this.complaintService.findAll(user, { ...query, status });
+    return this.complaintService.findAll(user, query);
   }
 
   @UseGuards(JwtAuthGuard)
