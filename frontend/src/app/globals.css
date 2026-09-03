@@ -1,3 +1,4 @@
+@import 'tailwindcss';
 @import 'leaflet/dist/leaflet.css';
 
 :root {
@@ -256,4 +257,127 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.25);
+}
+
+/* ---------------------------------------------------------------------------
+   Utility classes used across the app. Kept here alongside the existing tokens
+   rather than introduced as a second styling system.
+   --------------------------------------------------------------------------- */
+
+.page-shell {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 4rem;
+}
+
+.stat-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.section-title {
+  font-size: 1.15rem;
+  font-weight: 650;
+  margin-bottom: 0.85rem;
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+.subtle {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.btn-primary:disabled,
+.btn-danger:disabled,
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.field-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 0.35rem;
+}
+
+.form-error {
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  color: #fda4af;
+  border-radius: var(--radius-md);
+  padding: 0.7rem 0.9rem;
+  font-size: 0.88rem;
+}
+
+.form-notice {
+  background: rgba(6, 182, 212, 0.1);
+  border: 1px solid rgba(6, 182, 212, 0.3);
+  color: #67e8f9;
+  border-radius: var(--radius-md);
+  padding: 0.7rem 0.9rem;
+  font-size: 0.88rem;
+}
+
+/* The demo-data banner. Every screen that shows facility numbers carries this,
+   because the underlying records are simulated and must never read as a claim
+   about a real hospital's capacity. */
+.demo-banner {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  color: #fcd34d;
+  border-radius: var(--radius-md);
+  padding: 0.6rem 0.9rem;
+  font-size: 0.82rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.data-table th {
+  text-align: left;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.data-table td {
+  padding: 0.7rem 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  vertical-align: top;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04) 25%, rgba(255, 255, 255, 0.09) 50%, rgba(255, 255, 255, 0.04) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: var(--radius-md);
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
