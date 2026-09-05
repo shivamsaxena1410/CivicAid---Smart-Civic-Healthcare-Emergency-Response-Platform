@@ -180,3 +180,80 @@ export interface ApiResponse<T> {
   };
   timestamp: string;
 }
+
+// ------------------------------------------------------- live (third-party)
+
+/**
+ * Shapes returned by `/api/v1/live/*`. These mirror the backend interfaces in
+ * `backend/src/modules/live/`; they are genuinely live third-party data.
+ *
+ * Note what is absent: no availability fields. Real OSM facilities deliberately
+ * carry no bed counts, blood units or stock levels — those figures are
+ * simulated and belong only to seeded DEMO `Organization` rows. Keeping the two
+ * types disjoint is what stops fabricated availability being rendered as fact.
+ */
+export type LiveFacilityCategory =
+  | 'HOSPITAL'
+  | 'CLINIC'
+  | 'PHARMACY'
+  | 'BLOOD_BANK'
+  | 'AMBULANCE_STATION';
+
+export interface LiveFacility {
+  /** Stable OpenStreetMap reference, e.g. "way/38750705". Not a CivicConnect id. */
+  osmRef: string;
+  name: string;
+  category: LiveFacilityCategory;
+  latitude: number;
+  longitude: number;
+  distanceKm: number;
+  /** Only present when OSM holds the tag; never fabricated. */
+  address: string | null;
+  phone: string | null;
+  website: string | null;
+  openingHours: string | null;
+  /** Tagged `emergency=yes` in OSM — a contributor's claim, not a verified fact. */
+  hasEmergency: boolean;
+}
+
+export interface LiveFacilityResult {
+  facilities: LiveFacility[];
+  fetchedAt: string;
+  /** Must be displayed: the ODbL licence requires attribution. */
+  attribution: string;
+  radiusKm: number;
+}
+
+export interface ReverseGeocodeResult {
+  label: string;
+  street?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  country?: string;
+}
+
+export interface LiveEnvironment {
+  location: string;
+  fetchedAt: string;
+  /** `null` when the upstream call failed — render "unavailable", not a placeholder number. */
+  weather: {
+    temperatureC: number;
+    feelsLikeC: number;
+    humidityPct: number;
+    windKmh: number;
+    /** WMO weather interpretation code; map to a label/icon at the call site. */
+    weatherCode: number;
+    observedAt: string;
+  } | null;
+  airQuality: {
+    /** US EPA AQI as computed by Open-Meteo — NOT the Indian CPCB index. */
+    usAqi: number;
+    category: string;
+    pm25: number | null;
+    pm10: number | null;
+    observedAt: string;
+  } | null;
+  place: ReverseGeocodeResult;
+  sources: string[];
+}

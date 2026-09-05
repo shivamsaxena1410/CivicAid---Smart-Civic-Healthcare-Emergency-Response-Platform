@@ -19,6 +19,7 @@ import { ComplaintModule } from './modules/complaint/complaint.module';
 import { AlertModule } from './modules/alert/alert.module';
 import { AIChatModule } from './modules/ai-chat/ai-chat.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { LiveModule } from './modules/live/live.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { AdminModule } from './modules/admin/admin.module';
     AlertModule,
     AIChatModule,
     AdminModule,
+    LiveModule,
   ],
   controllers: [AppController],
   providers: [

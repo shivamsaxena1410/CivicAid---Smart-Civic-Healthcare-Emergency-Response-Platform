@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useAuthStore } from '../../store/auth.store';
 import { ErrorNote, Field } from '../../components/ui';
+import { DemoCredentials } from '../../components/DemoCredentials';
 import type { Role } from '../../types';
 
 /**
@@ -58,7 +59,7 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="page-shell" style={{ maxWidth: 520, paddingTop: '3rem' }}>
+    <div className="page-shell cc-auth-page cc-register-page" style={{ maxWidth: 520, paddingTop: '3rem' }}>
       <h1 style={{ fontSize: '1.7rem', fontWeight: 700 }}>Create an account</h1>
       <p className="muted" style={{ marginTop: '0.4rem', marginBottom: '1.25rem' }}>
         Citizen accounts are usable immediately. Organisation accounts are reviewed by an administrator before
@@ -124,6 +125,9 @@ export default function RegisterPage() {
       <p className="subtle" style={{ marginTop: '1rem' }}>
         Already registered? <Link href="/login" style={{ color: 'var(--accent-cyan)' }}>Sign in</Link>.
       </p>
+
+      {/* No form to fill here, so the rows copy the address to the clipboard. */}
+      <DemoCredentials />
     </div>
   );
 }

@@ -25,7 +25,7 @@ export function NavBar() {
   if (isStaff(user?.role)) links.push({ href: '/admin', label: 'Admin' });
 
   return (
-    <nav
+    <nav className="cc-app-nav"
       style={{
         borderBottom: '1px solid var(--border-subtle)',
         background: 'var(--bg-glass)',
@@ -46,17 +46,18 @@ export function NavBar() {
           flexWrap: 'wrap',
         }}
       >
-        <Link href="/dashboard" style={{ textDecoration: 'none', color: 'inherit', fontWeight: 700 }}>
+        <Link href="/dashboard" className="cc-app-wordmark" style={{ textDecoration: 'none', color: 'inherit', fontWeight: 700 }}>
           Civic<span style={{ color: 'var(--accent-cyan)' }}>Connect</span>
         </Link>
 
-        <div style={{ display: 'flex', gap: '0.15rem', flexWrap: 'wrap', flex: 1 }}>
+        <div className="cc-app-nav-links" style={{ display: 'flex', gap: '0.15rem', flexWrap: 'wrap', flex: 1 }}>
           {links.map((link) => {
             const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
             return (
               <Link
                 key={link.href}
                 href={link.href}
+                className={active ? 'cc-app-nav-link is-active' : 'cc-app-nav-link'}
                 style={{
                   textDecoration: 'none',
                   fontSize: '0.87rem',

@@ -55,7 +55,7 @@ export default function DashboardPage() {
   );
 
   return (
-    <>
+    <div className="cc-dashboard">
       <PageHeader
         title={`Welcome, ${user?.name?.split(' ')[0] ?? 'there'}`}
         subtitle="Civic health and emergency assistance at a glance."
@@ -186,6 +186,6 @@ export default function DashboardPage() {
           )}
         </section>
       </div>
-    </>
+    </div>
   );
 }

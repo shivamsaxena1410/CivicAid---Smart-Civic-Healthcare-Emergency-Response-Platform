@@ -7,9 +7,12 @@ import type {
   ComplaintStatus,
   EmergencyAlert,
   GovernmentScheme,
+  LiveEnvironment,
+  LiveFacilityResult,
   Organization,
   OrgType,
   PharmacyMedicine,
+  ReverseGeocodeResult,
   Role,
   User,
   VerificationStatus,
@@ -318,6 +321,27 @@ export const admin = {
 export const aiChat = {
   send: (message: string) => http.post<{ reply: string }>('/ai-chat/message', { message }).then((r) => r.data),
   history: () => http.get<Array<{ id: string; message: string; response: string; createdAt: string }>>('/ai-chat/history').then((r) => r.data ?? []),
+};
+
+// ----------------------------------------------------------------- live data
+
+/**
+ * Genuinely live third-party data: OpenStreetMap facilities, Open-Meteo
+ * observations, Nominatim place names. All three are public — they work
+ * signed-out, which is the point: finding a hospital must not require an
+ * account.
+ *
+ * These are the only endpoints the backend proxies to outside services, so they
+ * are throttled harder than the rest of the API. Call them once per view and
+ * pass the result down; do not poll.
+ */
+export const live = {
+  environment: (lat: number, lng: number) =>
+    http.get<LiveEnvironment>(`/live/environment${qs({ lat, lng })}`).then((r) => r.data),
+  reverseGeocode: (lat: number, lng: number) =>
+    http.get<ReverseGeocodeResult>(`/live/geocode/reverse${qs({ lat, lng })}`).then((r) => r.data),
+  facilities: (lat: number, lng: number, radiusKm?: number) =>
+    http.get<LiveFacilityResult>(`/live/facilities${qs({ lat, lng, radiusKm })}`).then((r) => r.data),
 };
 
 export type { Role, User };

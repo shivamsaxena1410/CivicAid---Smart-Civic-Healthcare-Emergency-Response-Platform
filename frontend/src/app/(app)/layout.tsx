@@ -13,7 +13,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <RequireAuth>
       <NavBar />
-      <div className="page-shell">{children}</div>
+      <div className="page-shell cc-app-shell">{children}</div>
     </RequireAuth>
   );
 }

@@ -210,6 +210,60 @@ async function main() {
   const errText = JSON.stringify(missing.json ?? {});
   check('errors do not leak stack traces or file paths', !/\.ts:|node_modules|prisma\\|at Object\./.test(errText));
 
+  // ------------------------------------------------------------ live data
+  //
+  // These hit third-party services (OpenStreetMap, Open-Meteo). Network flakes
+  // are not our bug, so an upstream outage is reported as a skip rather than a
+  // failure — but the contract that a *reachable* upstream must honour is
+  // asserted strictly, especially that live facilities carry no availability.
+  console.log('\nlive data (third-party)');
+  const BLR = 'lat=12.9716&lng=77.5946';
+
+  const env = await call('GET', `/live/environment?${BLR}`);
+  check('GET /live/environment is public (no token)', env.status === 200, `got ${env.status}`);
+  if (env.status === 200) {
+    const d = env.json?.data ?? {};
+    check('environment names the place it describes', typeof d.location === 'string' && d.location.length > 0);
+    check('environment credits its sources', Array.isArray(d.sources) && d.sources.length > 0);
+    if (d.airQuality) {
+      // The number is US EPA AQI, not CPCB. Mislabelling it in the UI would be
+      // a factual error, so the field name is asserted here.
+      check('air quality is reported as usAqi', typeof d.airQuality.usAqi === 'number');
+      check('air quality carries an observation time', typeof d.airQuality.observedAt === 'string');
+    } else {
+      console.log('  SKIP  air quality (upstream returned nothing)');
+    }
+    if (d.weather) {
+      check('weather carries an observation time', typeof d.weather.observedAt === 'string');
+    } else {
+      console.log('  SKIP  weather (upstream returned nothing)');
+    }
+  }
+
+  const facilities = await call('GET', `/live/facilities?${BLR}&radiusKm=3`);
+  check('GET /live/facilities is public (no token)', facilities.status === 200, `got ${facilities.status}`);
+  if (facilities.status === 200) {
+    const d = facilities.json?.data ?? {};
+    check('facilities carry OSM attribution (ODbL requires it)', /OpenStreetMap/i.test(d.attribution ?? ''));
+    const list = Array.isArray(d.facilities) ? d.facilities : [];
+    if (list.length === 0) {
+      console.log('  SKIP  facility shape (Overpass returned nothing)');
+    } else {
+      check('facilities are sorted nearest-first', list.every((f, i) => i === 0 || f.distanceKm >= list[i - 1].distanceKm));
+      check('every facility has an osmRef, not a CivicConnect id', list.every((f) => /^(node|way|relation)\//.test(f.osmRef ?? '')));
+      // The core provenance guarantee: real places never carry invented stock.
+      const availabilityKeys = ['availableBeds', 'availableIcuBeds', 'totalBeds', 'unitsAvailable', 'stock', 'quantity'];
+      check(
+        'live facilities expose NO availability figures',
+        list.every((f) => availabilityKeys.every((k) => !(k in f))),
+        'a real OSM place must never carry simulated availability',
+      );
+    }
+  }
+
+  const badLiveGeo = await call('GET', '/live/facilities?lat=999&lng=77.5946');
+  check('out-of-range latitude is rejected', badLiveGeo.status === 400, `got ${badLiveGeo.status}`);
+
   // ---------------------------------------------------------------- logout
   console.log('\nlogout');
   const out = await call('POST', '/auth/logout', { token: session.tokens.accessToken });
