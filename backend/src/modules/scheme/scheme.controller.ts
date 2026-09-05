@@ -9,7 +9,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { SchemeService } from './scheme.service';
 import { CreateSchemeDto, UpdateSchemeDto } from './dto/create-scheme.dto';
 import { SchemeQueryDto } from './dto/scheme-query.dto';

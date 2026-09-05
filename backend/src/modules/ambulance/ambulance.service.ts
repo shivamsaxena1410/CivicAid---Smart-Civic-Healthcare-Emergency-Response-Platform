@@ -49,7 +49,6 @@ const CONTACT_VISIBLE_STATUSES: AmbulanceRequestStatus[] = [
 ];
 
 const CITIZEN_CONTACT = { id: true, name: true, phone: true, email: true } as const;
-const CITIZEN_MINIMAL = { id: true, name: true } as const;
 
 @Injectable()
 export class AmbulanceService {

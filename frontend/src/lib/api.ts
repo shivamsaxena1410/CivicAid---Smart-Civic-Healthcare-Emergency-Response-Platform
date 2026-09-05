@@ -79,7 +79,7 @@ type RetriableRequest = InternalAxiosRequestConfig & { _retry?: boolean };
 api.interceptors.response.use(
   // TransformInterceptor wraps every success as { success, data, meta? }.
   (response) => response.data,
-  async (error: AxiosError<any>) => {
+  async (error: AxiosError<{ error?: { message?: string }; message?: string; correlationId?: string }>) => {
     const originalRequest = error.config as RetriableRequest | undefined;
 
     const canRetry =
@@ -106,7 +106,8 @@ api.interceptors.response.use(
       } catch {
         clearSession();
         if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
-          window.location.assign('/login?expired=1');
+          // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+          window.location.href = '/login?expired=1';
         }
         return Promise.reject(new Error('Your session has expired. Please sign in again.'));
       }

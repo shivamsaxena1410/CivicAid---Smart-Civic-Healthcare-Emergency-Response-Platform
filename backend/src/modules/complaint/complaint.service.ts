@@ -107,7 +107,7 @@ export class ComplaintService {
     const scope = await this.visibilityFilter(user);
 
     const where: Prisma.ComplaintWhereInput = {
-      ...(scope ?? {}),
+      ...scope,
       ...(status ? { status } : {}),
       ...(search
         ? {
@@ -161,7 +161,7 @@ export class ComplaintService {
     const scope = await this.visibilityFilter(user);
 
     const complaint = await this.prisma.complaint.findFirst({
-      where: { id, ...(scope ?? {}) },
+      where: { id, ...scope },
       include: {
         citizen: { select: CITIZEN_CONTACT },
         organization: { select: { id: true, name: true, type: true, city: true, address: true } },

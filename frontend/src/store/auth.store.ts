@@ -42,7 +42,7 @@ interface AuthState {
  * Demo accounts live in the seed (see backend/prisma/seed.ts) and are listed on
  * the login page; they authenticate for real.
  */
-export const useAuthStore = create<AuthState>((set, get) => ({
+export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   token: null,
   isLoading: false,

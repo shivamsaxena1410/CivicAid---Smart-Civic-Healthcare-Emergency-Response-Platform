@@ -8,7 +8,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ComplaintService } from './complaint.service';
 import { CreateComplaintDto, ResolveComplaintDto } from './dto/complaint.dto';
 import { ComplaintQueryDto } from './dto/complaint-query.dto';

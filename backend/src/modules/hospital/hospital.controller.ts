@@ -7,7 +7,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { HospitalService } from './hospital.service';
 import { UpdateHospitalCapacityDto } from './dto/update-capacity.dto';
 import { HospitalSearchDto } from './dto/hospital-search.dto';

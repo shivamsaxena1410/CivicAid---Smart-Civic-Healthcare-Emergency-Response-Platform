@@ -27,13 +27,20 @@ export function useAsync<T>(
   // `fn` is a fresh closure on every render; keeping it in a ref means the
   // effect re-runs only when `deps` change, not on every parent re-render.
   const fnRef = useRef(fn);
-  fnRef.current = fn;
+  useEffect(() => {
+    fnRef.current = fn;
+  });
 
   useEffect(() => {
     const requestId = ++latest.current;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
+
+    queueMicrotask(() => {
+      if (!cancelled && requestId === latest.current) {
+        setLoading(true);
+        setError(null);
+      }
+    });
 
     fnRef
       .current()
