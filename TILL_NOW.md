@@ -194,14 +194,16 @@ name. No real institution appears anywhere in it.
 
 Nothing blocks the demo. These are the honest gaps.
 
-**Known defect, in the hand-edited homepage.** `frontend/src/app/page.tsx` has three
-provenance problems: it renders hardcoded `28` and `42` under a "Live environment" heading
-captioned as live public data; it labels `/organizations` database rows as
-"Data layer: OpenStreetMap"; and `{ ...demoFacilities[i % demoFacilities.length] }` keeps the
-demo `kind`/`tone`/`icon` while overwriting only `name`, so a real seeded pharmacy can render
-with a hospital icon and a "Hospital" caption. This file is under active hand-editing by the
-author, so it has been reported rather than rewritten — but it currently contradicts the
-invariant the rest of the system enforces.
+**Known defect, in the hand-edited homepage — RESOLVED.** `frontend/src/app/page.tsx` previously had three
+provenance problems: it rendered hardcoded `28` and `42` under a "Live environment" heading
+captioned as live public data; it labeled `/organizations` database rows as
+"Data layer: OpenStreetMap"; and `{ ...demoFacilities[i % demoFacilities.length] }` kept the
+demo `kind`/`tone`/`icon` while overwriting only `name`, so a real seeded pharmacy could render
+with a hospital icon and a "Hospital" caption. These issues have been fixed: the live environment
+now displays actual weather/AQI data from Open-Meteo with proper loading states, the data layer
+labeling dynamically reflects the actual data source (OSM, seed, or demo), and facility cards now
+show correct icons, kinds, and tones based on the organization's actual type rather than demo
+templates. The homepage now fully respects the provenance invariant enforced throughout the system.
 
 **Deferred by choice, not oversight.**
 - `helmet` is not installed; `main.ts` sets the header subset by hand instead, with a comment
